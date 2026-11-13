@@ -3,12 +3,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* Intrusive free-list node stored inside the first bytes of each free block. */
+/* Stored inside the first few bytes of a block when it's free */
 typedef struct FreeNode {
     struct FreeNode *next;
 } FreeNode;
 
-/* Portable maximum scalar/pointer alignment probe (C99/C11 compatible). */
+/* Helper struct to figure out max alignment needed on this system */
 struct AlignProbe {
     char c;
     union {
@@ -22,14 +22,14 @@ struct AlignProbe {
 #define POOL_ALIGNMENT offsetof(struct AlignProbe, u)
 
 struct MemPool {
-    unsigned char *memory; /* Single contiguous heap chunk sliced into blocks */
-    uint8_t *used_bitmap;  /* 1 bit per block: 1 = allocated, 0 = free       */
-    FreeNode *free_list;   /* Head of O(1) singly-linked free list           */
-    size_t requested_size; /* Original block_size requested by caller        */
-    size_t aligned_size;   /* Padded/aligned stride per block in bytes       */
-    size_t total_blocks;   /* Total capacity of the pool in blocks           */
-    size_t used_blocks;    /* Current number of allocated blocks             */
-    size_t total_bytes;    /* Total byte size of `memory` buffer             */
+    unsigned char *memory; /* big contiguous chunk split into blocks */
+    uint8_t *used_bitmap;  /* 1 bit per block: 1 = in use, 0 = free */
+    FreeNode *free_list;   /* head of the free list */
+    size_t requested_size; /* original block_size passed to pool_create */
+    size_t aligned_size;   /* padded size per block */
+    size_t total_blocks;   /* total number of blocks */
+    size_t used_blocks;    /* how many blocks are currently allocated */
+    size_t total_bytes;    /* total byte size of `memory` */
 };
 
 static inline bool bitmap_is_set(const uint8_t *bitmap, size_t idx) {
@@ -49,7 +49,7 @@ MemPool *pool_create(size_t block_size, size_t block_count) {
         return NULL;
     }
 
-    /* Each block must at least hold a FreeNode pointer while free. */
+    /* Every free block needs enough room to store a FreeNode pointer */
     size_t min_size = (block_size < sizeof(FreeNode)) ? sizeof(FreeNode) : block_size;
     size_t align = POOL_ALIGNMENT;
 
@@ -88,7 +88,7 @@ MemPool *pool_create(size_t block_size, size_t block_count) {
     pool->used_blocks = 0;
     pool->total_bytes = total_bytes;
 
-    /* Thread all blocks into the initial free list in sequential order. */
+    /* Link all blocks together in order to build the initial free list */
     for (size_t i = 0; i < block_count; ++i) {
         FreeNode *curr = (FreeNode *)(pool->memory + (i * aligned_size));
         curr->next = (i + 1 < block_count)
@@ -125,18 +125,18 @@ bool pool_free(MemPool *pool, void *ptr) {
     uintptr_t addr = (uintptr_t)ptr;
     uintptr_t end = base + pool->total_bytes;
 
-    /* Bounds check: reject pointers outside the pool's contiguous chunk. */
+    /* Check if ptr is actually inside our pool's memory chunk */
     if (addr < base || addr >= end) {
         return false;
     }
 
-    /* Alignment check: reject interior pointers not on a block boundary. */
+    /* Check if ptr sits right at the start of a block (not in the middle) */
     uintptr_t offset = addr - base;
     if (offset % pool->aligned_size != 0) {
         return false;
     }
 
-    /* Double-free check: reject blocks that are already marked free. */
+    /* Make sure this block isn't already free (catches double-frees) */
     size_t idx = (size_t)(offset / pool->aligned_size);
     if (!bitmap_is_set(pool->used_bitmap, idx)) {
         return false;

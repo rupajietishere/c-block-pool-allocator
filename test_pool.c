@@ -31,7 +31,7 @@ static void test_invalid_inputs_and_null_safety(void) {
     TEST_ASSERT(pool_free(NULL, &dummy) == false);
     TEST_ASSERT(pool_get_stats(NULL, &stats) == false);
 
-    /* Must be safe no-ops */
+    /* Should be safe no-ops */
     pool_stats(NULL);
     pool_destroy(NULL);
 
@@ -70,7 +70,7 @@ static void test_normal_alloc_and_free(void) {
     TEST_ASSERT(stats.used_blocks == count);
     TEST_ASSERT(stats.free_blocks == 0);
 
-    /* Verify no block memory overwrote neighboring blocks */
+    /* Make sure writing to one block didn't mess up neighboring blocks */
     for (size_t i = 0; i < count; ++i) {
         char expected[16];
         snprintf(expected, sizeof(expected), "item_%zu", i);
@@ -93,7 +93,7 @@ static void test_normal_alloc_and_free(void) {
 }
 
 static void test_small_block_padding(void) {
-    /* Request 1-byte blocks; pool must pad internally for FreeNode & alignment */
+    /* Ask for 1-byte blocks to check that the pool pads them for FreeNode & alignment */
     MemPool *pool = pool_create(1, 5);
     TEST_ASSERT(pool != NULL);
 
@@ -129,19 +129,19 @@ static void test_exhaustion_and_reuse(void) {
         TEST_ASSERT(blocks[i] != NULL);
     }
 
-    /* Pool is now exhausted */
+    /* Pool should be full now */
     TEST_ASSERT(pool_alloc(pool) == NULL);
     TEST_ASSERT(pool_alloc(pool) == NULL);
 
-    /* Free one slot and verify it can be re-allocated immediately */
+    /* Free one block and check that we can grab it right back */
     TEST_ASSERT(pool_free(pool, blocks[2]) == true);
     void *reused = pool_alloc(pool);
     TEST_ASSERT(reused == blocks[2]);
 
-    /* Exhausted again */
+    /* Still full */
     TEST_ASSERT(pool_alloc(pool) == NULL);
 
-    /* Free all and verify full capacity is available again */
+    /* Free everything and make sure we can allocate all blocks again */
     blocks[2] = reused;
     for (size_t i = 0; i < count; ++i) {
         TEST_ASSERT(pool_free(pool, blocks[i]) == true);
@@ -169,9 +169,9 @@ static void test_double_free_protection(void) {
     void *p2 = pool_alloc(pool);
     TEST_ASSERT(p1 != NULL && p2 != NULL);
 
-    /* First free succeeds */
+    /* First free should work */
     TEST_ASSERT(pool_free(pool, p1) == true);
-    /* Second free of same block must fail without corrupting stats/free list */
+    /* Second free of the same pointer should fail without messing up stats */
     TEST_ASSERT(pool_free(pool, p1) == false);
 
     PoolStats stats;
@@ -179,7 +179,7 @@ static void test_double_free_protection(void) {
     TEST_ASSERT(stats.used_blocks == 1);
     TEST_ASSERT(stats.free_blocks == 2);
 
-    /* Re-allocate and verify pool still works cleanly */
+    /* Grab it again and test freeing once more */
     void *p3 = pool_alloc(pool);
     TEST_ASSERT(p3 == p1);
     TEST_ASSERT(pool_free(pool, p3) == true);
@@ -199,24 +199,24 @@ static void test_bounds_and_alignment_validation(void) {
     void *p2 = pool_alloc(pool2);
     TEST_ASSERT(p1 != NULL && p2 != NULL);
 
-    /* Stack pointer -> out of bounds */
+    /* Pointer on the stack(out of bounds) */
     int stack_var = 123;
     TEST_ASSERT(pool_free(pool1, &stack_var) == false);
 
-    /* Foreign heap pointer -> out of bounds */
+    /* Pointer from regular malloc (out of bounds) */
     void *foreign_heap = malloc(32);
     TEST_ASSERT(foreign_heap != NULL);
     TEST_ASSERT(pool_free(pool1, foreign_heap) == false);
     free(foreign_heap);
 
-    /* Cross-pool pointer -> out of bounds for pool1 */
+    /* Pointer from another pool (out of bounds for pool1) */
     TEST_ASSERT(pool_free(pool1, p2) == false);
 
-    /* Interior misaligned pointer -> must be rejected */
+    /* Pointer shifted by 1-byte inside a block (misaligned) */
     unsigned char *misaligned = (unsigned char *)p1 + 1;
     TEST_ASSERT(pool_free(pool1, misaligned) == false);
 
-    /* Valid frees still succeed */
+    /* Valid frees should still work */
     TEST_ASSERT(pool_free(pool1, p1) == true);
     TEST_ASSERT(pool_free(pool2, p2) == true);
 
@@ -239,8 +239,8 @@ static void test_stress_cycles_and_stats_print(void) {
         }
         TEST_ASSERT(pool_alloc(pool) == NULL);
 
-        /* Free even indices, re-allocate them, then free everything */
-        for (size_t i = 0; i < cap; i += 2) {
+        /* Free every even block, allocate them back, then free everything */
+	for (size_t i = 0; i < cap; i += 2) {
             TEST_ASSERT(pool_free(pool, ptrs[i]) == true);
         }
         for (size_t i = 0; i < cap; i += 2) {
