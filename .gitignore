@@ -1,0 +1,15 @@
+# Object files & binaries
+*.o
+*.out
+test_pool
+test_pool_asan
+
+# Debug artifacts & core dumps
+*.dSYM/
+core
+vgcore.*
+
+# Editor swap files
+*.swp
+*~
+.vscode/
